@@ -279,11 +279,35 @@ private:
 	std::atomic<int64_t> nextReportNanoseconds{0};
 };
 
+extern PerformanceMetrics g_performanceMetrics;
+
+// Constructor and destructor are defined here on purpose. This scope is opened
+// in hot paths - Map::getSpectators() runs on every move, attack and creature
+// utterance, and there are ~26 such sites across reactor, game, monster, map,
+// creature and combat. With the bodies out of line the compiler cannot inline or
+// elide them, so a build with metrics disabled still paid two real function
+// calls per scope. Inline, the disabled case collapses to one relaxed atomic
+// load and a well-predicted branch.
 class PerformanceScope
 {
 public:
-	explicit PerformanceScope(PerformanceMetric metric) noexcept;
-	~PerformanceScope();
+	explicit PerformanceScope(PerformanceMetric metric) noexcept :
+		metric(metric), active(g_performanceMetrics.isEnabled())
+	{
+		if (active) {
+			started = std::chrono::steady_clock::now();
+		}
+	}
+
+	~PerformanceScope()
+	{
+		if (active) {
+			const auto elapsed =
+			    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started)
+			        .count();
+			g_performanceMetrics.record(metric, elapsed > 0 ? static_cast<uint64_t>(elapsed) : 0);
+		}
+	}
 
 	PerformanceScope(const PerformanceScope&) = delete;
 	PerformanceScope& operator=(const PerformanceScope&) = delete;
@@ -293,7 +317,5 @@ private:
 	std::chrono::steady_clock::time_point started;
 	bool active;
 };
-
-extern PerformanceMetrics g_performanceMetrics;
 
 #endif // FS_PERFORMANCE_METRICS_H
