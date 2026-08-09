@@ -443,19 +443,5 @@ void PerformanceMetrics::maybeReport()
 	LOG_INFO("{}", report);
 }
 
-PerformanceScope::PerformanceScope(PerformanceMetric metric) noexcept :
-	metric(metric), active(g_performanceMetrics.isEnabled())
-{
-	if (active) {
-		started = std::chrono::steady_clock::now();
-	}
-}
-
-PerformanceScope::~PerformanceScope()
-{
-	if (active) {
-		const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-			std::chrono::steady_clock::now() - started).count();
-		g_performanceMetrics.record(metric, elapsed > 0 ? static_cast<uint64_t>(elapsed) : 0);
-	}
-}
+// PerformanceScope's constructor and destructor are defined inline in the header
+// so they can be inlined at the ~26 hot call sites.
