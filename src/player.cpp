@@ -7868,9 +7868,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 
 	if (checkText(text, "cancel") || checkText(text, "account")) {
 		managerTalkState[1] = true;
-		for (int8_t i = 2; i <= 12; i++) {
-			managerTalkState[i] = false;
-		}
+		resetTalkState(2, 13);
 		msg << "Do you want to change your 'password', 'recovery key', 'character' or 'delete'?";
 		sendTextMessage(MESSAGE_STATUS_CONSOLE_BLUE, msg.str());
 		return;
@@ -7905,9 +7903,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 		}
 
 		managerTalkState[1] = true;
-		for (int8_t i = 2; i <= 12; i++) {
-			managerTalkState[i] = false;
-		}
+		resetTalkState(2, 13);
 
 		sendTextMessage(MESSAGE_STATUS_CONSOLE_BLUE, msg.str());
 		return;
@@ -7940,9 +7936,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 		return;
 	} else if (checkText(text, "yes") && managerTalkState[5]) {
 		managerTalkState[1] = true;
-		for (int8_t i = 2; i <= 12; i++) {
-			managerTalkState[i] = false;
-		}
+		resetTalkState(2, 13);
 
 		IOLoginData::setPassword(managerData.accountId, managerData.string1);
 		msg << "Your password has been changed.";
@@ -7950,9 +7944,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 		return;
 	} else if (checkText(text, "no") && managerTalkState[5]) {
 		managerTalkState[1] = true;
-		for (int8_t i = 2; i <= 12; i++) {
-			managerTalkState[i] = false;
-		}
+		resetTalkState(2, 13);
 		msg << "Then not.";
 		sendTextMessage(MESSAGE_STATUS_CONSOLE_BLUE, msg.str());
 		return;
@@ -7960,9 +7952,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 		std::vector<std::string> characters = IOLoginData::getPlayersByAccountId(managerData.accountId);
 		if (characters.size() >= 15) {
 			managerTalkState[1] = true;
-			for (int8_t i = 2; i <= 12; i++) {
-				managerTalkState[i] = false;
-			}
+			resetTalkState(2, 13);
 			msg << "Your account reached the limit of 15 players; you can {delete} a character if you want to create a new one.";
 		} else {
 			managerTalkState[1] = false;
@@ -8062,9 +8052,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 			msg << ".";
 		} else if (!IOLoginData::playerNameExists(managerData.string1)) {
 			managerTalkState[1] = true;
-			for (int8_t i = 2; i <= 12; i++) {
-				managerTalkState[i] = false;
-			}
+			resetTalkState(2, 13);
 
 			if (IOLoginData::createPlayer(managerData.accountId, managerData.string1, 1, managerData.sex)) {
 				msg << "Your character has been created.";
@@ -8100,9 +8088,7 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 	} else if (checkText(text, "yes") && managerTalkState[12]) {
 		if (!IOLoginData::playerNameExists(managerData.string1)) {
 			managerTalkState[1] = true;
-			for (int8_t i = 2; i <= 12; i++) {
-				managerTalkState[i] = false;
-			}
+			resetTalkState(2, 13);
 
 			Vocation* vocation = g_vocations.getVocation(managerData.vocationId);
 			if (!vocation) {
@@ -8143,17 +8129,13 @@ void Player::handleAccountManager(const std::string& text, std::ostringstream& m
 		}
 
 		managerTalkState[1] = true;
-		for (int8_t i = 2; i <= 12; i++) {
-			managerTalkState[i] = false;
-		}
+		resetTalkState(2, 13);
 		sendTextMessage(MESSAGE_STATUS_CONSOLE_BLUE, msg.str());
 		return;
 	} else if (checkText(text, "no") && managerTalkState[10]) {
 		msg << "Then not.";
 		managerTalkState[1] = true;
-		for (int8_t i = 2; i <= 12; i++) {
-			managerTalkState[i] = false;
-		}
+		resetTalkState(2, 13);
 		sendTextMessage(MESSAGE_STATUS_CONSOLE_BLUE, msg.str());
 		return;
 	} else {
@@ -8295,9 +8277,7 @@ void Player::handleNewAccountManager(const std::string& text, std::ostringstream
 				accountNumber = newAccountId;
 
 				managerTalkState[1] = true;
-				for (int8_t i = 2; i <= 5; i++) {
-					managerTalkState[i] = false;
-				}
+				resetTalkState(2, 6);
 
 				msg << "Your account has been created, you may manage it now, but remember your account name: '"
 				    << managerData.accountName << "' and password: '" << managerData.string1
@@ -8312,9 +8292,7 @@ void Player::handleNewAccountManager(const std::string& text, std::ostringstream
 			} else {
 				msg << "Sorry, your account could not be created (all account numbers taken or system error). Please contact an administrator.";
 
-				for (int8_t i = 2; i <= 5; i++) {
-					managerTalkState[i] = false;
-				}
+				resetTalkState(2, 6);
 
 				LOG_ERROR(fmt::format("[Error] Failed to create account after {} attempts", maxAttempts));
 			}
@@ -8370,9 +8348,7 @@ void Player::handleNewAccountManager(const std::string& text, std::ostringstream
 				accountNumber = newAccountId;
 
 				managerTalkState[1] = true;
-				for (int8_t i = 2; i <= 5; i++) {
-					managerTalkState[i] = false;
-				}
+				resetTalkState(2, 6);
 
 				msg << "Your account has been created, you may manage it now, but remember your account name: '"
 				    << managerData.accountName << "' and password: '" << managerData.string1 << "'!";
@@ -8385,9 +8361,7 @@ void Player::handleNewAccountManager(const std::string& text, std::ostringstream
 				return;
 			} else {
 				msg << "Your account could not be created, please try again.";
-				for (int8_t i = 2; i <= 5; i++) {
-					managerTalkState[i] = false;
-				}
+				resetTalkState(2, 6);
 			}
 		} else {
 			msg << "An account with that name already exists, please try another account name.";
@@ -8412,9 +8386,7 @@ void Player::handleNewAccountManager(const std::string& text, std::ostringstream
 			// Account already exists, switch to ACCOUNT mode
 			accountManager = ACCOUNT_MANAGER_ACCOUNT;
 			managerTalkState[1] = true;
-			for (int8_t i = 2; i <= 12; i++) {
-				managerTalkState[i] = false;
-			}
+			resetTalkState(2, 13);
 			std::vector<std::string> characters = IOLoginData::getPlayersByAccountId(managerData.accountId);
 			if (characters.size() >= 15) {
 				msg << "Your account reached the limit of 15 players; you can 'delete' a character if you want to create a new one.";

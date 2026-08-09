@@ -1604,7 +1604,14 @@ private:
 	void handleNewAccountManager(const std::string& text, std::ostringstream& msg, bool& shouldShowHelp);
 	bool checkText(std::string_view text, std::string_view match) const;
 	void resetTalkState(size_t from = 0, size_t to = 15);
-	void setManagerTalkState(size_t index, bool value) { managerTalkState[index] = value; }
+	void setManagerTalkState(size_t index, bool value)
+	{
+		// Bounds-checked: this is a public setter over a fixed-size array, and an
+		// out-of-range index would be an out-of-bounds write rather than a no-op.
+		if (index < managerTalkState.size()) {
+			managerTalkState[index] = value;
+		}
+	}
 
 	void gainExperience(uint64_t gainExp, const std::shared_ptr<Creature>& source);
 	void updateSkullAfterPzLockEnded();
