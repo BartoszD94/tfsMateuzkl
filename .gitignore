@@ -213,7 +213,8 @@ tfs
 !data/npc/lib/tfs/init.lua
 
 # Others
-*.emmyrc.jsondata/scripts/meus/
+*.emmyrc.json
+data/scripts/meus/
 build-valgrind-linux/
 tfs-valgrind
 callgrind.out.*
@@ -222,3 +223,4 @@ analysis-reports/
 compile_commands.json
 *.plist
 *.sarif
+stress-test-results.html
