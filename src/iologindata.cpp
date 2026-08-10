@@ -67,7 +67,19 @@ std::string decodeSecret(std::string_view secret)
 	return key;
 }
 
-bool IOLoginData::loginserverAuthentication(std::string_view name, std::string_view password, Account& account)
+namespace {
+
+IOLoginData::AuthenticationResult failedQueryAuthenticationResult(const Database& db)
+{
+	return db.getLastErrno() == 0 ? IOLoginData::AuthenticationResult::Rejected
+	                              : IOLoginData::AuthenticationResult::DatabaseError;
+}
+
+} // namespace
+
+IOLoginData::AuthenticationResult IOLoginData::loginserverAuthentication(std::string_view name,
+                                                                         std::string_view password,
+                                                                         Account& account)
 {
     Database& db = Database::getInstance();
 
@@ -75,11 +87,11 @@ bool IOLoginData::loginserverAuthentication(std::string_view name, std::string_v
         "SELECT `id`, `name`, UNHEX(`password`) AS `password`, `secret`, `type`, `premium_ends_at`, `tibia_coins` FROM `accounts` WHERE LOWER(`name`) = LOWER({:s})",
         db.escapeString(name)));
     if (!result) {
-        return false;
+		return failedQueryAuthenticationResult(db);
     }
 
     if (transformToSHA1(password) != result->getString("password")) {
-        return false;
+		return AuthenticationResult::Rejected;
     }
 
 	account.id = result->getNumber<uint32_t>("id");
@@ -99,18 +111,18 @@ bool IOLoginData::loginserverAuthentication(std::string_view name, std::string_v
             std::string charName = std::string{result->getString("name")};
             account.characters.push_back(charName);
         } while (result->next());
-    } else {
+	} else if (db.getLastErrno() != 0) {
+		return AuthenticationResult::DatabaseError;
     }
-    return true;
+    return AuthenticationResult::Success;
 }
 
-std::pair<uint32_t, uint32_t> IOLoginData::gameworldAuthentication(std::string_view accountName,
-                                                                   std::string_view password,
-                                                                   std::string_view characterName, bool& cast)
+IOLoginData::GameworldAuthenticationResult IOLoginData::gameworldAuthentication(std::string_view accountName,
+                                                                                std::string_view password,
+                                                                                std::string_view characterName)
 {
 	if (accountName.empty()) {
-		cast = true;
-		return {0, 0};
+		return {AuthenticationResult::Success, 0, 0, true};
 	}
 
     Database& db = Database::getInstance();
@@ -118,41 +130,48 @@ std::pair<uint32_t, uint32_t> IOLoginData::gameworldAuthentication(std::string_v
     std::string query = fmt::format(
         "SELECT `a`.`id` AS `account_id`, UNHEX(`a`.`password`) AS `password`, `a`.`secret`, `p`.`id` AS `character_id` FROM `accounts` `a` JOIN `players` `p` ON `a`.`id` = `p`.`account_id` WHERE LOWER(`a`.`name`) = LOWER({:s}) AND LOWER(`p`.`name`) = LOWER({:s}) AND `p`.`deletion` = 0",
         db.escapeString(accountName), db.escapeString(characterName));
-    
+
     DBResult_ptr result = db.storeQuery(query);
     if (!result) {
+		if (db.getLastErrno() != 0) {
+			return {AuthenticationResult::DatabaseError};
+		}
+
         // Fallback path: validate account and use the first available character of the account
         DBResult_ptr accountCheck = db.storeQuery(fmt::format(
             "SELECT `id`, `name`, UNHEX(`password`) AS `password`, `secret` FROM `accounts` WHERE LOWER(`name`) = LOWER({:s})",
             db.escapeString(accountName)));
         if (!accountCheck) {
-            return {};
+			return {failedQueryAuthenticationResult(db)};
         }
 
         uint32_t fallbackAccountId = accountCheck->getNumber<uint32_t>("id");
         if (transformToSHA1(password) != accountCheck->getString("password")) {
-            return {};
+			return {AuthenticationResult::Rejected};
         }
 
         // Special-case: Account Manager selection from non-1 account
         if (ConfigManager::getBoolean(ConfigManager::ACCOUNT_MANAGER) && characterName == "Account Manager" && fallbackAccountId != 1) {
             DBResult_ptr accMgrRes = db.storeQuery("SELECT `id` FROM `players` WHERE `name` = 'Account Manager' AND `account_id` = 1 AND `deletion` = 0");
             if (!accMgrRes) {
-                return {};
+				return {failedQueryAuthenticationResult(db)};
             }
             uint32_t accountManagerId = accMgrRes->getNumber<uint32_t>("id");
-			return {fallbackAccountId, accountManagerId};
+			return {AuthenticationResult::Success, fallbackAccountId, accountManagerId};
         }
 
         // The account authenticated but the requested character did not resolve:
         // it does not exist, is deleted, or belongs to someone else. Report the
         // account as valid and the character as unresolved, so the caller can say
         // so instead of silently logging the player into a different character.
-        return {fallbackAccountId, 0};
+        //
+        // Credentials verified, so this is a Success with nothing to log in as -
+        // never a Rejected, which would burn a login attempt on a mistyped name.
+        return {AuthenticationResult::Success, fallbackAccountId, 0};
     }
 
     if (transformToSHA1(password) != result->getString("password")) {
-        return {};
+		return {AuthenticationResult::Rejected};
     }
 
 	uint32_t accountId = result->getNumber<uint32_t>("account_id");
@@ -161,14 +180,14 @@ std::pair<uint32_t, uint32_t> IOLoginData::gameworldAuthentication(std::string_v
 	if (ConfigManager::getBoolean(ConfigManager::ACCOUNT_MANAGER) && characterName == "Account Manager" && accountId != 1) {
         result = db.storeQuery("SELECT `id` FROM `players` WHERE `name` = 'Account Manager' AND `account_id` = 1 AND `deletion` = 0");
         if (!result) {
-            return {};
+			return {failedQueryAuthenticationResult(db)};
         }
         uint32_t accountManagerId = result->getNumber<uint32_t>("id");
         // Return the user's authenticated account id with the Account Manager character id
-        return {accountId, accountManagerId};
+        return {AuthenticationResult::Success, accountId, accountManagerId};
     }
 
-	return {accountId, characterId};
+	return {AuthenticationResult::Success, accountId, characterId};
 }
 
 uint32_t IOLoginData::getAccountIdByPlayerName(std::string_view playerName)
