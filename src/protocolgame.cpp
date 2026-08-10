@@ -1217,33 +1217,25 @@ void ProtocolGame::onRecvFirstMessage(NetworkMessage& msg)
 	// cast password instead, so it only meets the per-IP spray guard - watching a
 	// stream keeps working while one account on the same address is locked out.
 	if (!LoginAttemptLimiter::getInstance().allowLogin(getIP(), accountName)) {
-		disconnectClient("Too many failed login attempts. Please try again later.");
+		disconnectClient("Too many failed login attempts. Please wait 5 minutes.");
 		return;
 	}
 
 	// Authenticate and resolve account/character IDs
-	const auto auth = IOLoginData::gameworldAuthentication(accountName, password, characterName);
-	if (auth.status == IOLoginData::AuthStatus::Cast) {
+	bool cast = false;
+	auto authPair = IOLoginData::gameworldAuthentication(accountName, password, characterName, cast);
+	if (cast) {
 		g_dispatcher.addTask([thisPtr = getThis(), name = std::string(characterName), pass = std::string(password)]() { thisPtr->spectate(name, pass); });
 		return;
 	}
+	uint32_t accountId = authPair.first;
+	uint32_t characterId = authPair.second;
 
-	// A database fault proves nothing about the credentials, so it is neither a
-	// success nor a failure. Counting it would let an outage lock players out of
-	// their own accounts, which is the opposite of what the limiter is for.
-	if (auth.status == IOLoginData::AuthStatus::DatabaseError) {
-		disconnectClient("Unable to verify your login right now. Please try again in a moment.");
-		return;
-	}
-
-	if (auth.status == IOLoginData::AuthStatus::Rejected) {
+	if (accountId == 0) {
 		LoginAttemptLimiter::getInstance().recordFailure(getIP(), accountName);
 	} else {
 		LoginAttemptLimiter::getInstance().recordSuccess(getIP(), accountName);
 	}
-
-	const uint32_t accountId = auth.accountId;
-	const uint32_t characterId = auth.characterId;
 
 	BanInfo banInfo;
 	if (IOBan::isIpBanned(getIP(), banInfo)) {

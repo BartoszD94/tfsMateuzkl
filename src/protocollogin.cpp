@@ -300,16 +300,7 @@ void ProtocolLogin::getCharacterList(std::string_view accountName, std::string_v
 	uint32_t clientIP = connection ? connection->getIP() : 0;
 
 	Account account;
-	const auto authStatus = IOLoginData::loginserverAuthentication(accountName, password, account);
-
-	// A database fault proves nothing either way, so it is not recorded. Counting
-	// it would let an outage lock legitimate players out of their own accounts.
-	if (authStatus == IOLoginData::AuthStatus::DatabaseError) {
-		disconnectClient("Unable to verify your login right now. Please try again in a moment.");
-		return;
-	}
-
-	if (authStatus != IOLoginData::AuthStatus::Success) {
+	if (!IOLoginData::loginserverAuthentication(accountName, password, account)) {
 		LoginAttemptLimiter::getInstance().recordFailure(clientIP, accountName);
 		disconnectClient("Account name or password is not correct.");
 		return;
@@ -645,7 +636,7 @@ void ProtocolLogin::onRecvFirstMessage(NetworkMessage& msg)
 	// locked out.
 	uint32_t clientIP = connection ? connection->getIP() : 0;
 	if (!LoginAttemptLimiter::getInstance().allowLogin(clientIP, accountName)) {
-		disconnectClient("Too many failed login attempts. Please try again later.");
+		disconnectClient("Too many failed login attempts. Please wait 5 minutes.");
 		return;
 	}
 
