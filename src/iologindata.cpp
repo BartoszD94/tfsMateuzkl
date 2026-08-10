@@ -67,7 +67,8 @@ std::string decodeSecret(std::string_view secret)
 	return key;
 }
 
-bool IOLoginData::loginserverAuthentication(std::string_view name, std::string_view password, Account& account)
+IOLoginData::AuthStatus IOLoginData::loginserverAuthentication(std::string_view name, std::string_view password,
+                                                               Account& account)
 {
     Database& db = Database::getInstance();
 
@@ -75,11 +76,13 @@ bool IOLoginData::loginserverAuthentication(std::string_view name, std::string_v
         "SELECT `id`, `name`, UNHEX(`password`) AS `password`, `secret`, `type`, `premium_ends_at`, `tibia_coins` FROM `accounts` WHERE LOWER(`name`) = LOWER({:s})",
         db.escapeString(name)));
     if (!result) {
-        return false;
+        // storeQuery yields null both for a query failure and for zero rows, so the
+        // error code is what separates "the database is down" from "no such account".
+        return db.getLastErrno() != 0 ? AuthStatus::DatabaseError : AuthStatus::Rejected;
     }
 
     if (transformToSHA1(password) != result->getString("password")) {
-        return false;
+        return AuthStatus::Rejected;
     }
 
 	account.id = result->getNumber<uint32_t>("id");
@@ -99,76 +102,88 @@ bool IOLoginData::loginserverAuthentication(std::string_view name, std::string_v
             std::string charName = std::string{result->getString("name")};
             account.characters.push_back(charName);
         } while (result->next());
-    } else {
     }
-    return true;
+    // An empty character list is not an authentication problem: the credentials
+    // were already verified above, the account simply has no characters yet.
+    return AuthStatus::Success;
 }
 
-std::pair<uint32_t, uint32_t> IOLoginData::gameworldAuthentication(std::string_view accountName,
-                                                                   std::string_view password,
-                                                                   std::string_view characterName, bool& cast)
+IOLoginData::AuthenticationResult IOLoginData::gameworldAuthentication(std::string_view accountName,
+                                                                       std::string_view password,
+                                                                       std::string_view characterName)
 {
 	if (accountName.empty()) {
-		cast = true;
-		return {0, 0};
+		return {AuthStatus::Cast, 0, 0};
 	}
 
-    Database& db = Database::getInstance();
-    
-    std::string query = fmt::format(
-        "SELECT `a`.`id` AS `account_id`, UNHEX(`a`.`password`) AS `password`, `a`.`secret`, `p`.`id` AS `character_id` FROM `accounts` `a` JOIN `players` `p` ON `a`.`id` = `p`.`account_id` WHERE LOWER(`a`.`name`) = LOWER({:s}) AND LOWER(`p`.`name`) = LOWER({:s}) AND `p`.`deletion` = 0",
-        db.escapeString(accountName), db.escapeString(characterName));
-    
-    DBResult_ptr result = db.storeQuery(query);
-    if (!result) {
-        // Fallback path: validate account and use the first available character of the account
-        DBResult_ptr accountCheck = db.storeQuery(fmt::format(
-            "SELECT `id`, `name`, UNHEX(`password`) AS `password`, `secret` FROM `accounts` WHERE LOWER(`name`) = LOWER({:s})",
-            db.escapeString(accountName)));
-        if (!accountCheck) {
-            return {};
-        }
+	Database& db = Database::getInstance();
 
-        uint32_t fallbackAccountId = accountCheck->getNumber<uint32_t>("id");
-        if (transformToSHA1(password) != accountCheck->getString("password")) {
-            return {};
-        }
+	// storeQuery returns null both when a query fails and when it matches nothing,
+	// so the error code is what separates a database fault from a wrong password.
+	// Callers count rejections against the brute force limiter; a database fault
+	// must never be counted, or an outage would lock legitimate players out.
+	const auto rejectedOrDbError = [&db]() {
+		return AuthenticationResult{db.getLastErrno() != 0 ? AuthStatus::DatabaseError : AuthStatus::Rejected, 0, 0};
+	};
 
-        // Special-case: Account Manager selection from non-1 account
-        if (ConfigManager::getBoolean(ConfigManager::ACCOUNT_MANAGER) && characterName == "Account Manager" && fallbackAccountId != 1) {
-            DBResult_ptr accMgrRes = db.storeQuery("SELECT `id` FROM `players` WHERE `name` = 'Account Manager' AND `account_id` = 1 AND `deletion` = 0");
-            if (!accMgrRes) {
-                return {};
-            }
-            uint32_t accountManagerId = accMgrRes->getNumber<uint32_t>("id");
-			return {fallbackAccountId, accountManagerId};
-        }
+	DBResult_ptr result = db.storeQuery(fmt::format(
+	    "SELECT `a`.`id` AS `account_id`, UNHEX(`a`.`password`) AS `password`, `a`.`secret`, `p`.`id` AS `character_id` FROM `accounts` `a` JOIN `players` `p` ON `a`.`id` = `p`.`account_id` WHERE LOWER(`a`.`name`) = LOWER({:s}) AND LOWER(`p`.`name`) = LOWER({:s}) AND `p`.`deletion` = 0",
+	    db.escapeString(accountName), db.escapeString(characterName)));
+	if (!result) {
+		if (db.getLastErrno() != 0) {
+			return {AuthStatus::DatabaseError, 0, 0};
+		}
 
-        // The account authenticated but the requested character did not resolve:
-        // it does not exist, is deleted, or belongs to someone else. Report the
-        // account as valid and the character as unresolved, so the caller can say
-        // so instead of silently logging the player into a different character.
-        return {fallbackAccountId, 0};
-    }
+		// No row for this (account, character) pair. Fall back to validating the
+		// account on its own, so a mistyped or deleted character still reports the
+		// account correctly rather than looking like a bad password.
+		DBResult_ptr accountCheck = db.storeQuery(fmt::format(
+		    "SELECT `id`, `name`, UNHEX(`password`) AS `password`, `secret` FROM `accounts` WHERE LOWER(`name`) = LOWER({:s})",
+		    db.escapeString(accountName)));
+		if (!accountCheck) {
+			return rejectedOrDbError();
+		}
 
-    if (transformToSHA1(password) != result->getString("password")) {
-        return {};
-    }
+		const uint32_t fallbackAccountId = accountCheck->getNumber<uint32_t>("id");
+		if (transformToSHA1(password) != accountCheck->getString("password")) {
+			return {AuthStatus::Rejected, 0, 0};
+		}
 
-	uint32_t accountId = result->getNumber<uint32_t>("account_id");
-	uint32_t characterId = result->getNumber<uint32_t>("character_id");
+		// Special-case: Account Manager selection from a non-1 account
+		if (ConfigManager::getBoolean(ConfigManager::ACCOUNT_MANAGER) && characterName == "Account Manager" &&
+		    fallbackAccountId != 1) {
+			DBResult_ptr accMgrRes = db.storeQuery(
+			    "SELECT `id` FROM `players` WHERE `name` = 'Account Manager' AND `account_id` = 1 AND `deletion` = 0");
+			if (!accMgrRes) {
+				return rejectedOrDbError();
+			}
+			return {AuthStatus::Success, fallbackAccountId, accMgrRes->getNumber<uint32_t>("id")};
+		}
 
-	if (ConfigManager::getBoolean(ConfigManager::ACCOUNT_MANAGER) && characterName == "Account Manager" && accountId != 1) {
-        result = db.storeQuery("SELECT `id` FROM `players` WHERE `name` = 'Account Manager' AND `account_id` = 1 AND `deletion` = 0");
-        if (!result) {
-            return {};
-        }
-        uint32_t accountManagerId = result->getNumber<uint32_t>("id");
-        // Return the user's authenticated account id with the Account Manager character id
-        return {accountId, accountManagerId};
-    }
+		// The credentials are good but the requested character did not resolve. That
+		// is a successful authentication with nothing to log in as, not a rejection -
+		// counting it would let a typo in a character name burn login attempts.
+		return {AuthStatus::Success, fallbackAccountId, 0};
+	}
 
-	return {accountId, characterId};
+	if (transformToSHA1(password) != result->getString("password")) {
+		return {AuthStatus::Rejected, 0, 0};
+	}
+
+	const uint32_t accountId = result->getNumber<uint32_t>("account_id");
+	const uint32_t characterId = result->getNumber<uint32_t>("character_id");
+
+	if (ConfigManager::getBoolean(ConfigManager::ACCOUNT_MANAGER) && characterName == "Account Manager" &&
+	    accountId != 1) {
+		result = db.storeQuery(
+		    "SELECT `id` FROM `players` WHERE `name` = 'Account Manager' AND `account_id` = 1 AND `deletion` = 0");
+		if (!result) {
+			return rejectedOrDbError();
+		}
+		return {AuthStatus::Success, accountId, result->getNumber<uint32_t>("id")};
+	}
+
+	return {AuthStatus::Success, accountId, characterId};
 }
 
 uint32_t IOLoginData::getAccountIdByPlayerName(std::string_view playerName)

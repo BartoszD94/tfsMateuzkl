@@ -19,10 +19,29 @@ class IOLoginData
 public:
 	static Account loadAccount(uint32_t accno);
 
-	static bool loginserverAuthentication(std::string_view name, std::string_view password, Account& account);
-	static std::pair<uint32_t, uint32_t> gameworldAuthentication(std::string_view accountName,
-	                                                             std::string_view password,
-	                                                             std::string_view characterName, bool& cast);
+	// Authentication has to distinguish "these credentials are wrong" from "the
+	// database did not answer". Both used to surface as the same empty result, so a
+	// transient DB fault was counted as a failed guess and could lock legitimate
+	// players out of their own accounts.
+	enum class AuthStatus : uint8_t
+	{
+		Success,       // credentials verified
+		Rejected,      // wrong account or password, or the character does not resolve
+		DatabaseError, // the query failed; nothing was proven either way
+		Cast,          // no account name given: a spectator request, not an account login
+	};
+
+	struct AuthenticationResult
+	{
+		AuthStatus status = AuthStatus::Rejected;
+		uint32_t accountId = 0;
+		uint32_t characterId = 0;
+	};
+
+	static AuthStatus loginserverAuthentication(std::string_view name, std::string_view password, Account& account);
+	static AuthenticationResult gameworldAuthentication(std::string_view accountName,
+	                                                    std::string_view password,
+	                                                    std::string_view characterName);
 	static uint32_t getAccountIdByPlayerName(std::string_view playerName);
 	static uint32_t getAccountIdByPlayerId(uint32_t playerId);
 
